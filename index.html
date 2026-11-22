@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="K Code">
+<meta name="theme-color" content="#14161A">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" href="icon-192.png">
+<title>K Code</title>
+<!-- 激活码生成器。密钥只保存在本机，从不发送到任何地方；页面本身不含密钥。 -->
+<style>
+  :root { --bg: #14161A; --card: #1C1F24; --edge: #2F343B; --text: #EEF0F2; --dim: #8A9098; --red: #D4111E; --amber: #FFB020; }
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; background: var(--bg); color: var(--text); font: 16px -apple-system, system-ui, sans-serif;
+         padding: calc(env(safe-area-inset-top) + 24px) 16px calc(env(safe-area-inset-bottom) + 24px); }
+  main { max-width: 440px; margin: 0 auto; }
+  header { display: flex; align-items: center; gap: 12px; margin-bottom: 28px; }
+  header img { width: 52px; height: 30px; object-fit: contain; }
+  h1 { font-size: 22px; margin: 0; }
+  label { display: block; margin: 18px 0 8px; color: var(--dim); font-size: 14px; }
+  input { width: 100%; padding: 14px; font-size: 22px; background: var(--card); color: #fff; border: 1px solid var(--edge); border-radius: 10px;
+          letter-spacing: 3px; font-family: ui-monospace, Menlo, monospace; }
+  input:focus { outline: none; border-color: var(--red); }
+  #secret { font-size: 18px; letter-spacing: 1px; }
+  #device { text-transform: uppercase; }
+  .result { margin-top: 28px; padding: 20px; background: var(--card); border: 1px solid var(--edge); border-radius: 14px; text-align: center; min-height: 132px; }
+  .result .hint { color: var(--dim); font-size: 14px; }
+  #out { font: 700 42px ui-monospace, Menlo, monospace; letter-spacing: 4px; color: var(--amber); margin: 6px 0 14px; }
+  button { padding: 12px 28px; font-size: 17px; font-weight: 600; color: #fff; background: var(--red); border: 0; border-radius: 10px; }
+  button:active { transform: scale(.97); }
+  .err { color: #FF5A64; }
+  footer { margin-top: 24px; color: #5E636B; font-size: 13px; line-height: 1.5; }
+</style>
+</head>
+<body>
+<main>
+  <header><img src="k_mark.webp" alt=""><h1>激活码生成器</h1></header>
+
+  <label for="secret">密钥（只存在这台设备上）</label>
+  <input id="secret" type="password" autocomplete="off" autocapitalize="off" spellcheck="false">
+
+  <label for="device">车机上显示的设备码</label>
+  <input id="device" placeholder="XXXX-XXXX" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="9">
+
+  <div class="result">
+    <div class="hint" id="hint">输入 8 位设备码</div>
+    <div id="out"></div>
+    <button id="copy" hidden>复制激活码</button>
+  </div>
+
+  <footer>离线可用。密钥不会上传，换手机或清除 Safari 数据后要重新填一次。</footer>
+</main>
+<script>
+const ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+const normalize = s => s.toUpperCase().replace(/[-\s]/g, '').replace(/O/g, '0').replace(/[IL]/g, '1');
+function format(bytes) {
+  let bits = 0n;
+  for (const b of bytes.slice(0, 5)) bits = (bits << 8n) | BigInt(b);
+  let s = '';
+  for (let i = 7; i >= 0; i--) s += ALPHABET[Number((bits >> BigInt(i * 5)) & 31n)];
+  return s.slice(0, 4) + '-' + s.slice(4);
+}
+async function activationCode(secret, deviceCode) {
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey('raw', enc.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  return format(new Uint8Array(await crypto.subtle.sign('HMAC', key, enc.encode(normalize(deviceCode)))));
+}
+if (typeof document !== 'undefined') {
+  const $ = id => document.getElementById(id);
+  try { $('secret').value = localStorage.getItem('obd-secret') || ''; } catch (e) {}
+  async function update() {
+    try { localStorage.setItem('obd-secret', $('secret').value); } catch (e) {}
+    const dev = normalize($('device').value);
+    const valid = dev.length === 8 && [...dev].every(c => ALPHABET.includes(c));
+    let code = '';
+    if (!$('secret').value) $('hint').textContent = '先填密钥';
+    else if (!dev) $('hint').textContent = '输入 8 位设备码';
+    else if (!valid) { $('hint').textContent = dev.length < 8 ? `还差 ${8 - dev.length} 位` : '设备码不对，请再核对'; }
+    else {
+      try { code = await activationCode($('secret').value, dev); $('hint').textContent = '激活码'; }
+      catch (e) { $('hint').innerHTML = '<span class="err">这个浏览器不支持计算，请用 Safari 打开</span>'; }
+    }
+    $('out').textContent = code;
+    $('copy').hidden = !code;
+    $('copy').textContent = '复制激活码';
+  }
+  $('secret').oninput = update;
+  $('device').oninput = update;
+  $('copy').onclick = async () => {
+    try { await navigator.clipboard.writeText($('out').textContent); $('copy').textContent = '已复制'; }
+    catch (e) { $('copy').textContent = '复制失败，请手动抄写'; }
+  };
+  update();
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+}
+</script>
+</body>
+</html>
